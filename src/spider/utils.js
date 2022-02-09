@@ -226,10 +226,134 @@ function tokenizer(input) {
     return tokens;
 }
 
+var defaultFSInfo = {
+    default: {
+        'font-family': [],
+        'font-style': 'normal',
+        'font-weight': 'normal',
+    },
+    address: {
+        'font-family': [],
+        'font-style': 'italic',
+        'font-weight': 'normal',
+    },
+    b: {
+        'font-family': [],
+        'font-style': 'normal',
+        'font-weight': 'bold',
+    },
+    cite: {
+        'font-family': [],
+        'font-style': 'italic',
+        'font-weight': 'normal',
+    },
+    code: {
+        'font-family': ['monospace'],
+        'font-style': 'normal',
+        'font-weight': 'normal',
+    },
+    dfn: {
+        'font-family': [],
+        'font-style': 'italic',
+        'font-weight': 'normal',
+    },
+    em: {
+        'font-family': [],
+        'font-style': 'italic',
+        'font-weight': 'normal',
+    },
+    h1: {
+        'font-family': [],
+        'font-style': 'normal',
+        'font-weight': 'bold',
+    },
+    h2: {
+        'font-family': [],
+        'font-style': 'normal',
+        'font-weight': 'bold',
+    },
+    h3: {
+        'font-family': [],
+        'font-style': 'normal',
+        'font-weight': 'bold',
+    },
+    h4: {
+        'font-family': [],
+        'font-style': 'normal',
+        'font-weight': 'bold',
+    },
+    h5: {
+        'font-family': [],
+        'font-style': 'normal',
+        'font-weight': 'bold',
+    },
+    h6: {
+        'font-family': [],
+        'font-style': 'normal',
+        'font-weight': 'bold',
+    },
+    i: {
+        'font-family': [],
+        'font-style': 'italic',
+        'font-weight': 'normal',
+    },
+    kbd: {
+        'font-family': ['monospace'],
+        'font-style': 'normal',
+        'font-weight': 'normal',
+    },
+    pre: {
+        'font-family': ['monospace'],
+        'font-style': 'normal',
+        'font-weight': 'normal',
+    },
+    samp: {
+        'font-family': ['monospace'],
+        'font-style': 'normal',
+        'font-weight': 'normal',
+    },
+    strong: {
+        'font-family': [],
+        'font-style': 'normal',
+        'font-weight': 'bold',
+    },
+    th: {
+        'font-family': [],
+        'font-style': 'normal',
+        'font-weight': 'bold',
+    },
+    var: {
+        'font-family': [],
+        'font-style': 'italic',
+        'font-weight': 'normal',
+    },
+};
+
+
+var fontStyleOrder = {
+    'normal': {
+        'normal': 0,
+        'oblique': 1,
+        'italic': 2,
+    },
+    'italic': {
+        'italic': 0,
+        'oblique': 1,
+        'normal': 2,
+    },
+    'oblique': {
+        'oblique': 0,
+        'italic': 1,
+        'normal': 2,
+    },
+};
+
 
 
 module.exports = {
     split: split,
     tokenizer: tokenizer,
-    cssContentParser: cssContentParser
+    cssContentParser: cssContentParser,
+    defaultFSInfo: defaultFSInfo,
+    fontStyleOrder: fontStyleOrder
 };

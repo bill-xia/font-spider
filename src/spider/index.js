@@ -6,6 +6,112 @@ var Adapter = require('../adapter');
 var WebFont = require('./web-font');
 var concat = require('./concat');
 var colors = require('colors/safe');
+var defaultFSInfo = utils.defaultFSInfo;
+var fontStyleOrder = utils.fontStyleOrder;
+
+// 遍历文档树，将字体属性下推至所有继承节点，将内容添加至匹配的WebFonts的char属性中
+function dfsDocument(element, haveFontStyle, inheritedInfo, webFonts) {
+    var fsInfo;
+    if (element._fontSpiderInfo) {
+        inheritedInfo = {
+            'font-family': element._fontSpiderInfo['font-family'].length > 0 ? element._fontSpiderInfo['font-family'] : inheritedInfo['font-family'],
+            'font-style': element._fontSpiderInfo['font-style'] || inheritedInfo['font-style'],
+            'font-weight': element._fontSpiderInfo['font-weight'] || inheritedInfo['font-weight']
+        };
+        haveFontStyle = true;
+    }
+    if (element.pseudoNode) {
+        dfsDocument(element.pseudoNode, haveFontStyle, inheritedInfo, webFonts);
+    }
+    var defInfo;
+    if (element.nodeName) {
+        defInfo = defaultFSInfo[element.nodeName.toLowerCase()] || defaultFSInfo.default;
+    } else {
+        defInfo = defaultFSInfo.default;
+    }
+    fsInfo = {
+        'font-family': inheritedInfo['font-family'].length > 0 ? inheritedInfo['font-family'] : defInfo['font-family'],
+        'font-style': inheritedInfo['font-style'] || defInfo['font-style'],
+        'font-weight': inheritedInfo['font-weight'] || defInfo['font-weight']
+    };
+    // console.log(element.nodeName);
+    if (element.nodeName && haveFontStyle) {
+        var content = element.textContent;
+
+        // @see https://github.com/aui/font-spider/issues/99
+        if (!content && (element.nodeName === 'INPUT' || element.nodeName === 'TEXTAREA')) {
+            // TODO element.getAttribute('value')
+            content = element.getAttribute('placeholder');
+        }
+
+        content += content.toLowerCase();
+        content += content.toUpperCase();
+
+        // 处理 fallback，按照 family 第一关键字, style 第二关键字, weight 第三关键字的顺序对 webFonts 进行排序
+        // 最靠前者若可匹配字体，则获得 fallback 资格
+        webFonts.sort(function(a, b) {
+            if (fsInfo['font-family'].indexOf('"' + a.family + '"') === -1 || fsInfo['font-family'].indexOf('"' + b.family + '"') === -1) {
+                // 必有一个为 -1，另一个一定比它大；若同时为 -1 都无法匹配，返回相等即可
+                return fsInfo['font-family'].indexOf('"' + b.family + '"') - fsInfo['font-family'].indexOf('"' + a.family + '"');
+            }
+            // family 都有匹配，比较 style
+            // style顺序：
+            //  - fsInfo['font-style'] === 'normal', 则为 normal < italic == oblique
+            //  - fsInfo['font-style'] === 'italic', 则为 italic < oblique < normal
+            //  - fsInfo['font-style'] === 'oblique', 则为 oblique < italic < normal
+            if (fontStyleOrder[fsInfo['font-style']][a.style] !== fontStyleOrder[fsInfo['font-style']][b.style]) {
+                return fontStyleOrder[fsInfo['font-style']][a.style] - fontStyleOrder[fsInfo['font-style']][b.style];
+            }
+            // style 顺序相当，比较 weight
+            // 规则详见：https://developer.mozilla.org/zh-CN/docs/Web/CSS/font-weight#回退机制
+            var aw = WebFont.getFontWeight(a.weight);
+            var bw = WebFont.getFontWeight(b.weight);
+            var ew = WebFont.getFontWeight(fsInfo['font-weight']);
+            if (400 <= ew && ew <= 500) {
+                if (ew == aw) aw = 3300;
+                else if (ew <= aw && aw <= 500) aw = aw - ew + 2200;
+                else if (aw < ew) aw = ew - aw + 1100;
+                else aw = aw - ew;
+                if (ew == bw) bw = 3300;
+                else if (ew <= bw && bw <= 500) bw = bw - ew + 2200;
+                else if (bw < ew) bw = ew - bw + 1100;
+                else bw = bw - ew;
+            } else if (ew < 400) {
+                if (ew == aw) aw = 3300;
+                else if (aw <= ew) aw = ew - aw + 1100;
+                else aw = aw - ew;
+                if (ew == bw) bw = 3300;
+                else if (bw <= ew) bw = ew - bw + 1100;
+                else bw = bw - ew;
+            } else if (ew > 500) {
+                if (ew == aw) aw = 3300;
+                else if (aw >= ew) aw = aw - ew + 1100;
+                else aw = ew - aw;
+                if (ew == bw) bw = 3300;
+                else if (bw >= ew) bw = bw - ew + 1100;
+                else bw = ew - bw;
+            }
+            return bw - aw;
+        });
+
+        var vis = {}
+
+        webFonts.forEach(function(webFont) {
+            if (vis[webFont.family]) return;
+            if (webFont.matchFSInfo(fsInfo)) {
+                webFont.addChar(content);
+                vis[webFont.family] = true;
+            }
+        });
+
+    }
+    if (element.childNodes) {
+        for (var i = 0; i < element.childNodes.length; ++i) {
+            dfsDocument(element.childNodes[i], haveFontStyle, inheritedInfo, webFonts);
+        }
+    }
+}
+
 
 /**
  * 蜘蛛类
@@ -54,61 +160,55 @@ FontSpider.prototype = {
         var pseudoSelector = /\:\:?(?:before|after)$/i;
         var inlineStyleSelectors = 'body[style*="font"], body [style*="font"]';
 
-
+        // 将字体信息写入选择器选择的所有节点
         cssStyleRules.forEach(function(cssStyleRule) {
             var style = cssStyleRule.style;
             var selectors = cssStyleRule.selectorText;
-            webFonts.forEach(function(webFont) {
-
-                // 如果当前规则包含已知的 webFont
-                if (webFont.matchStyle(style)) {
-
-                    that.getSelectors(selectors).forEach(function(selector) {
-                        var chars = '';
-
-                        if (pseudoSelector.test(selector)) {
-
-                            // 伪元素直接拿 content 字段
-                            chars = that.getContent(selector, style.content);
-
-                        } else {
-
-                            // 通过选择器查找元素拥有的文本节点
-                            that.getElements(selector).forEach(function(element) {
-                                var content = element.textContent;
-
-                                // @see https://github.com/aui/font-spider/issues/99
-                                if (!content && (element.nodeName === 'INPUT' || element.nodeName === 'TEXTAREA')) {
-                                    // TODO element.getAttribute('value')
-                                    content = element.getAttribute('placeholder');
+            if (WebFont.haveFontStyle(style)) {
+                that.getSelectors(selectors).forEach(function(selector) {
+                    if (pseudoSelector.test(selector)) {
+                        if (style.content) {
+                            that.getElements(selector, true).forEach(function(element) {
+                                var pseudoNode = {}
+                                if (utils.cssContentParser(style.content)[0]) {
+                                    pseudoNode.textContent = utils.cssContentParser(style.content)[0].value;
+                                } else {
+                                    pseudoNode.textContent = '';
                                 }
-
-                                chars += content || '';
-                                webFont.addElement(element);
+                                pseudoNode.ispseudo = true;
+                                pseudoNode.nodeName = '#';
+                                pseudoNode._fontSpiderInfo = {
+                                    'font-family': WebFont.getComputedFontFamilys(style),
+                                    'font-style': WebFont.getComputedFontStyle(style),
+                                    'font-weight': WebFont.getComputedFontWeight(style)
+                                }
+                                element.pseudoNode = pseudoNode;
                             });
                         }
-
-
-                        webFont.addChar(chars);
-                        webFont.addSelector(selector);
-
-                        if (that.debug) {
-                            that.debugInfo({
-                                family: webFont.family,
-                                selector: selector,
-                                chars: chars,
-                                type: 1
-                            });
+                    }
+                    that.getElements(selector, true).forEach(function(element) {
+                        var oldInfo = element._fontSpiderInfo;
+                        // if (element.id == 'main-nav-toggle') {
+                        //     console.log(element._fontSpiderInfo);
+                        // }
+                        if (oldInfo) {
+                            var new_family = WebFont.getComputedFontFamilys(style);
+                            element._fontSpiderInfo = {
+                                'font-family': new_family.length > 0 ? new_family : oldInfo['font-family'],
+                                'font-style': WebFont.getComputedFontStyle(style) || oldInfo['font-style'],
+                                'font-weight': WebFont.getComputedFontWeight(style) || oldInfo['font-weight']
+                            };
+                        } else {
+                            element._fontSpiderInfo = {
+                                'font-family': WebFont.getComputedFontFamilys(style),
+                                'font-style': WebFont.getComputedFontStyle(style),
+                                'font-weight': WebFont.getComputedFontWeight(style)
+                            };
                         }
                     });
-
-                    // 没有显式声明字体的伪元素需要进一步计算获取继承字体
-                } else if (style.content && !WebFont.getComputedFontFamilys(style).length) {
-
-                    pseudoCssStyleRules.push(cssStyleRule);
-                }
-
-            });
+                    
+                });
+            }
         });
 
 
@@ -116,61 +216,33 @@ FontSpider.prototype = {
         this.getSelectors(inlineStyleSelectors).forEach(function(selector) {
             that.getElements(selector).forEach(function(element) {
                 var style = element.style;
-                webFonts.forEach(function(webFont) {
-                    if (webFont.matchStyle(style)) {
-                        var chars = element.textContent;
-
-                        webFont.addChar(chars);
-                        webFont.addElement(element);
-
-                        if (that.debug) {
-                            that.debugInfo({
-                                family: webFont.family,
-                                selector: selector,
-                                chars: chars,
-                                type: 2
-                            });
-                        }
+                if (WebFont.haveFontStyle(style)) {
+                    var oldInfo = element._fontSpiderInfo;
+                    if (oldInfo) {
+                        var new_family = WebFont.getComputedFontFamilys(style);
+                        element._fontSpiderInfo = {
+                            'font-family': new_family.length > 0 ? new_family : oldInfo['font-family'],
+                            'font-style': WebFont.getComputedFontStyle(style) || oldInfo['font-style'],
+                            'font-weight': WebFont.getComputedFontWeight(style) || oldInfo['font-weight']
+                        };
+                    } else {
+                        element._fontSpiderInfo = {
+                            'font-family': WebFont.getComputedFontFamilys(style),
+                            'font-style': WebFont.getComputedFontStyle(style),
+                            'font-weight': WebFont.getComputedFontWeight(style)
+                        };
                     }
-                });
+                }
             });
         });
 
 
-
-        // 分析伪元素所继承的字体
-        pseudoCssStyleRules.forEach(function(cssStyleRule) {
-            var content = cssStyleRule.style.content;
-            var selectors = cssStyleRule.selectorText;
-            that.getSelectors(selectors).filter(function(selector) {
-                return pseudoSelector.test(selector);
-            }).forEach(function(selector) {
-
-                that.getElements(selector, true).forEach(function(element) {
-                    webFonts.forEach(function(webFont) {
-
-                        if (!webFont.matchElement(element)) {
-                            return;
-                        }
-
-                        var chars = that.getContent(selector, content);
-                        webFont.addChar(chars);
-                        webFont.addSelector(selector);
-
-                        if (that.debug) {
-                            that.debugInfo({
-                                family: webFont.family,
-                                selector: selector,
-                                chars: chars,
-                                type: 3
-                            });
-                        }
-
-                    });
-                });
-
-            });
-        });
+        // 遍历文档树，将字体属性下推至所有继承节点，将内容添加至匹配的WebFonts的char属性中
+        dfsDocument(this.document, false, {
+            'font-family': [],
+            'font-style': '',
+            'font-weight': ''
+        }, webFonts)
 
 
         pseudoCssStyleRules = null;
